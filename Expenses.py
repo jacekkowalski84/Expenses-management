@@ -1,151 +1,198 @@
-from csv import DictReader
 from dataclasses import dataclass
-import pickle
+import datetime
+import os
 import sys
-from typing import Any
 
 import click
+import mysql.connector
+from mysql.connector import errorcode
 
-FILENAME = r"budget.db"
-FILE_CSV = r"expenses.csv"
-BIG_EXPANSE_TRESHOLD = 1000
+
+HOST = os.environ.get('host')
+USER = os.environ.get('user')
+PASSWORD = os.environ.get('password_to_db')
+DB = os.environ.get('database')
+CONFIG = {
+        'user': USER,
+        'password': PASSWORD,
+        'host': HOST,        
+        'use_pure': False}
+CONFIG_DB = CONFIG
+CONFIG_DB['database']=DB
+SQL_QUERIES = {
+            'create_database': f'CREATE DATABASE {DB}',
+            'use_database': f'USE {DB}',
+            'create_table' : f'''CREATE TABLE {USER}_expenses
+                                (
+                                exp_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                                name VARCHAR (30) NOT NULL, 
+                                amount DECIMAL(10,2) NOT NULL, 
+                                category VARCHAR (15) NOT NULL,
+                                date VARCHAR (10) NOT NULL
+                                )''',
+            'insert' : f'''INSERT INTO {USER}_expenses
+                            VALUES
+                            (%s, %s, %s, %s, %s)''',
+            'select_all' : f'SELECT * FROM {USER}_expenses',
+            'select_category': f'WHERE category = %s',
+            'select_date_min': f'WHERE date >',
+            'select_date_min': f'WHERE date <',
+                }
+
+
+class MySQL_Connector:
+    def __init__ (self, config: dict):
+        self.connection = mysql.connector.connect(**config)
+        self.cursor = self.connection.cursor()
+    
+
+    @classmethod
+    def create_database(cls):
+        '''Creates 'expenses' database.'''
+        connection = mysql.connector.connect(**CONFIG)
+        cursor = connection.cursor()
+        try:
+            cursor.execute(SQL_QUERIES['create_database'])
+        except mysql.connector.Error as e:
+            raise ValueError (f"Failed creating database: {e}")
+
+
+    @classmethod
+    def use_database (cls)-> None:
+        '''Creates an 'expenses' database if one doesn't exists.
+        Executes USE 'database' query.'''
+        db = cls(CONFIG)
+        try:
+            db.cursor.execute(SQL_QUERIES['use_database'])
+        except mysql.connector.Error as e:
+            print(f'Database "{DB}" does not exists.')
+            if e.errno == errorcode.ER_BAD_DB_ERROR:
+                create_database(db.cursor)
+                print (f'Database {DB} created successefully.')            
+                db.connection.database = DB
+            else:
+                raise ValueError (e)
+            
+    
+    @classmethod
+    def create_new_table (cls)->None:
+        '''Adding new expenses table to database based on username.'''
+        db =cls(CONFIG_DB)
+        try:
+            db.cursor.execute(SQL_QUERIES['create_table'])
+            print('Table created.')
+        except mysql.connector.Error as e:
+            if e.errno == errorcode.ER_TABLE_EXISTS_ERROR:
+                raise ValueError ("Table with this name already exists.")
+            else:
+                raise ValueError (e.msg)
+
 
 @dataclass
 class Expanse:
-    id: int
-    amount : int
-    description: str
-
-
-    def is_big (self)->bool:
-        return self.amount >= BIG_EXPANSE_TRESHOLD
-
+    id: None
+    name: str
+    amount : float
+    category: str
+    date: str
 
     def __postinit__ (self):
+        if self.id != None:
+            raise ValueError ('Expanse ID has to be a None value!')
+        if self.name == "":
+            raise ValueError ("Missing name.")
         if self.amount=="":
             raise ValueError ("Missing amount argument!")
         if type(self.amount) != int:
             raise ValueError ("The amount should be an integer!") 
         if self.amount <= 0:
             raise ValueError ("The amount has to be > 0!")
-        if self.description == "":
-            raise ValueError ("Missing description.")
+    
+
+    def __repr__(self) -> str:
+        return f'Expense(id={self.id}, name={self.name!r}, amount={self.amount}, category={self.category}, date={self.date})'
 
 
-def open_file ()->list[Expanse]:
+def create_mysql_connection ()-> MySQL_Connector:
+    '''Creates a connection to the MySQL server 
+    and returns a MySQLConnection object'''
     try:
-        with open (FILENAME, "rb") as stream:
-            expenses = pickle.load (stream)
-    except FileNotFoundError:
-        expenses = []
-    return expenses
+        connection = MySQL_Connector (CONFIG_DB)
+    except mysql.connector.errors.ProgrammingError:
+        MySQL_Connector.use_database()
+        MySQL_Connector.create_new_table()
+        connection = MySQL_Connector(CONFIG_DB)
+    return connection
 
 
-def save_file (expanses: list[Expanse])-> None:
-    with open (FILENAME, "wb") as stream:
-        pickle.dump (expanses, stream)
+def close_mysql_connection (db: MySQL_Connector)->None:
+    db.cursor.close()
+    db.connection.close()
 
 
-def id_generate (expenses: list[Expanse])->int:
-    all_ids = {expense.id for expense in expenses}
-    counter = 0
-    while True:
-        counter+=1
-        if counter not in all_ids:
-            new_id = counter
-            break
-    return new_id
+def create_database(cursor):
+    try:
+        cursor.execute(f"CREATE DATABASE {DB} DEFAULT CHARACTER SET 'utf8'")
+    except mysql.connector.Error as e:
+        raise ValueError (f"Failed creating database: {e}")
 
 
-def expanse_item_generate (expenses: list[Expanse], amount_: int, description_: str)-> Expanse:
+def create_single_expense (name_:str, amount_: float, category_:str, date_:str)-> Expanse:
     return Expanse (
-        id = id_generate (expenses),
-        amount = int(amount_),
-        description = description_
+        id = None,
+        name = name_,
+        amount = float(amount_),
+        category = category_,
+        date = date_
         )
 
 
-def add_new_expanse (expanses: list[Expanse], amount: int, description: str)-> None:
-    try:
-        new_expanse = expanse_item_generate (expanses, amount, description)
-    except ValueError as e:
-        print (f"Error: {e.args[0]}")
-    expanses.append (new_expanse)
-    save_file (expanses)
+def insert_values (db: MySQL_Connector, expense: Expanse):
+    query = SQL_QUERIES ['insert']
+    data_expense = (None,
+                expense.name,
+                expense.amount,
+                expense.category,
+                expense.date)
+    db.cursor.execute(query, data_expense)
+    db.connection.commit()
+    return db.cursor.fetchall()
 
 
-def compute_total_expanses (expanses:list[Expanse])->int:
-    amounts = [expanse.amount for expanse in expanses]
-    amounts_total = sum (amounts)
-    return amounts_total
-
-
-def print_raport (expanses: list[Expanse]) -> None:
-    print ("-=ID=- -=AMOUNT=- -=BIG?=- DESCRIPTION")
-    if expanses:
-        for expanse in expanses:
-            if expanse.is_big():
-                big = "!"
-            else:
-                big = ""
-            print (f"{expanse.id:^7} {expanse.amount:9} {big:^9} {expanse.description}")
-        amounts_total = compute_total_expanses (expanses)
-        print (f"  SUM:{amounts_total:11}")
-    else:
-        print ("Nie wprowadziłeś żadnych wydatków.")
-
-
-def print_object_raport (expanses: list[Expanse])-> None:
-    for expanse in expanses:
-        print (f"{expanse!r}")
-
-
-def open_csv ()->list[dict]:
-    try:
-        with open (FILE_CSV) as stream:
-            reader = DictReader (stream)
-            rows = [row for row in reader]
-    except FileNotFoundError:
-        print ("File not found")
-        sys.exit (1)
-    return rows
-
-
-def csv_expanses_import (expanses: list[Expanse], row: dict[str, str])-> None:
-    amount = float(row ["amount"])
-    description = row ["description"]
-    add_new_expanse (expanses, amount, description)
-
-
+def generate_raport (db: MySQL_Connector)->None:
+    query = SQL_QUERIES ['select_all']
+    db.cursor.execute (query)
+    print ('-ID- --=NAME=-- -=AMOUNT=- -=CATEGORY=- -=DATE=-')
+    for e in db.cursor:
+            print (f'{e[0]:3} {e[1]:13} {e[2]:9^} {e[3]:15} {e[4]:12}')
 
 @click.group()
 def cli():
     pass
+    
 
 @cli.command()
-@click.argument ("amount", type=int)
-@click.argument ("description")
-def add (amount, description):
-    expanses = open_file()
-    add_new_expanse (expanses, amount, description)
+@click.argument ('name')
+@click.argument ('amount')
+@click.argument ('category')
+@click.argument ('date')
+def add (name, amount, category, date)->None:
+    db = create_mysql_connection()
+    try:
+        expense = create_single_expense (name, amount, category, date)
+        insert_values (db, expense)
+    except ValueError as e:
+        print (e)
+        sys.exit(1)
+    close_mysql_connection(db)
 
 @cli.command()
 def raport()->None:
-    expanses = open_file()
-    print_raport (expanses)
-
-@cli.command()
-def export_python():
-    expanses = open_file()
-    print_object_raport (expanses)
-
-@cli.command()
-def import_csv():
-    expanses = open_file()
-    reader = open_csv()
-    for row in reader:
-        csv_expanses_import (expanses, row)
-        
+    db = create_mysql_connection()
+    generate_raport(db)
+    # close_mysql_connection(db)
+       
 
 if __name__ == "__main__":
     cli()
+
