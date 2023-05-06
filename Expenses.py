@@ -1,26 +1,52 @@
+'''
+Usage:
+    python Expenses.py <command> <command_parametrs...>
+
+Commands and parameters:
+    add <name: str> <amount:float> <category:str> <dat:str>
+
+    raport: no additional parameters
+
+Enviromental variables:
+    Note for correct usage enviromental variables for MySQL connection must be set in your terminal:
+
+    export host = 'hostname' (e.g. 'localhost')
+    export user = 'username' (e.g. 'root')
+    database = 'database_name' (e.g. 'expenses')
+    export password = 'password'
+
+'''
+
 from dataclasses import dataclass
-import datetime
+from datetime import datetime
 import os
 import sys
 
 import click
+from dateutil import parser
 import mysql.connector
 from mysql.connector import errorcode
 
 
-HOST = os.environ.get('host')
-USER = os.environ.get('user')
-PASSWORD = os.environ.get('password_to_db')
+USER= os.environ.get('user')
+HOST= os.environ.get('host')
+PASSWORD = os.environ.get('password')
 DB = os.environ.get('database')
 CONFIG = {
         'user': USER,
         'password': PASSWORD,
         'host': HOST,        
-        'use_pure': False}
-CONFIG_DB = CONFIG
-CONFIG_DB['database']=DB
+        'use_pure': False
+        }
+CONFIG_DB= {
+        'user': USER,
+        'password': PASSWORD,
+        'host': HOST,   
+        'database': DB,     
+        'use_pure': False
+        }
 SQL_QUERIES = {
-            'create_database': f'CREATE DATABASE {DB}',
+            'create_database': f'CREATE DATABASE {DB} ',
             'use_database': f'USE {DB}',
             'create_table' : f'''CREATE TABLE {USER}_expenses
                                 (
@@ -28,20 +54,20 @@ SQL_QUERIES = {
                                 name VARCHAR (30) NOT NULL, 
                                 amount DECIMAL(10,2) NOT NULL, 
                                 category VARCHAR (15) NOT NULL,
-                                date VARCHAR (10) NOT NULL
+                                date VARCHAR (50) NOT NULL
                                 )''',
             'insert' : f'''INSERT INTO {USER}_expenses
                             VALUES
                             (%s, %s, %s, %s, %s)''',
             'select_all' : f'SELECT * FROM {USER}_expenses',
-            'select_category': f'WHERE category = %s',
-            'select_date_min': f'WHERE date >',
-            'select_date_min': f'WHERE date <',
+            'select_category': f'category = ',
+            'select_date_min': f'date >',
+            'select_date_max': f'date <',
                 }
 
 
 class MySQL_Connector:
-    def __init__ (self, config: dict):
+    def __init__ (self, config):
         self.connection = mysql.connector.connect(**config)
         self.cursor = self.connection.cursor()
     
@@ -88,13 +114,14 @@ class MySQL_Connector:
                 raise ValueError (e.msg)
 
 
+
 @dataclass
 class Expanse:
     id: None
     name: str
     amount : float
     category: str
-    date: str
+    date: datetime
 
     def __postinit__ (self):
         if self.id != None:
@@ -124,7 +151,6 @@ def create_mysql_connection ()-> MySQL_Connector:
         connection = MySQL_Connector(CONFIG_DB)
     return connection
 
-
 def close_mysql_connection (db: MySQL_Connector)->None:
     db.cursor.close()
     db.connection.close()
@@ -138,12 +164,13 @@ def create_database(cursor):
 
 
 def create_single_expense (name_:str, amount_: float, category_:str, date_:str)-> Expanse:
+    datetype = parser.parse(date_)
     return Expanse (
         id = None,
         name = name_,
         amount = float(amount_),
         category = category_,
-        date = date_
+        date = datetype
         )
 
 
@@ -159,8 +186,43 @@ def insert_values (db: MySQL_Connector, expense: Expanse):
     return db.cursor.fetchall()
 
 
-def generate_raport (db: MySQL_Connector)->None:
+def add_apostrophes (text: str)-> str:
+    text = f"'{text}'"
+    return text
+
+def convert_date_format (text:str)->str:
+    try: 
+        text_new = parser.parse(text)
+        text_new = add_apostrophes (text_new.strftime ("%Y-%m-%d"))
+        return text_new
+    except:
+        raise ValueError ('Wrong date format.')
+
+def generate_raport_query(date_min=None, date_max=None, category=None)->str:
     query = SQL_QUERIES ['select_all']
+    counter = 0
+    if date_min != None or date_max != None or category != None:
+        query = query + ' WHERE '
+    if date_min != None:
+        date_min = convert_date_format (date_min)
+        counter +=1
+        query += SQL_QUERIES ['select_date_min'] + date_min
+    if date_max != None:
+        if counter > 0:
+            query += ' AND '
+        date_max = convert_date_format (date_max)
+        counter +=1
+        query += SQL_QUERIES ['select_date_max'] + date_max
+    if category != None:
+        if counter > 0:
+            query += ' AND '
+        query += SQL_QUERIES ['select_category'] + add_apostrophes (category)
+    query += ';'
+    return query
+
+
+def generate_raport (db: MySQL_Connector, date_min: str, date_max: str, category: str)->None:
+    query = generate_raport_query (date_min, date_max, category)
     db.cursor.execute (query)
     print ('-ID- --=NAME=-- -=AMOUNT=- -=CATEGORY=- -=DATE=-')
     for e in db.cursor:
@@ -187,10 +249,13 @@ def add (name, amount, category, date)->None:
     close_mysql_connection(db)
 
 @cli.command()
-def raport()->None:
+@click.argument ('date_min', required=False)
+@click.argument ('date_max', required=False)
+@click.argument ('category', required=False)
+def raport(date_min:str, date_max:str, category:str)->None:
     db = create_mysql_connection()
-    generate_raport(db)
-    # close_mysql_connection(db)
+    generate_raport(db, date_min, date_max, category)
+    close_mysql_connection(db)
        
 
 if __name__ == "__main__":
