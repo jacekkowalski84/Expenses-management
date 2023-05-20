@@ -26,8 +26,6 @@ import sys
 
 import click
 from dateutil import parser
-# import mysql.connector
-# from mysql.connector import errorcode
 
 from SQL_Connectors import Connector, MySQL_Connector, PostgreSQL_Connector, SQLite_Connector
 
@@ -53,33 +51,6 @@ MYSQL_CONFIG_DB= {
         'use_pure': False
         }
 
-# if RDBM == 'mysql':
-#     DB_CONFIG = {
-#         'user': USER,
-#         'password': PASSWORD,
-#         'host': HOST,
-#         'use_pure': False
-#     }
-#     DB_CONFIG_DB = {
-#         'user': USER,
-#         'password': PASSWORD,
-#         'host': HOST,
-#         'database': DATABASE,
-#         'use_pure': False
-#     }
-# elif RDBM == 'postgresql':
-#     DB_CONFIG = {
-#         'user': USER,
-#         'password': PASSWORD,
-#         'host': HOST,
-#         'database': DATABASE
-#     }
-#     DB_CONFIG_DB = DB_CONFIG
-# elif RDBM == 'sqlite':
-#     DB_CONFIG = None
-#     DB_CONFIG_DB = FILENAME
-# else:
-#     raise ValueError('Incorrect RDBM choice.')
 
 ######     SQL QUERIES:    ######
 
@@ -165,6 +136,7 @@ def add_apostrophes (text: str)-> str:
     return text
 
 def convert_date_format (text:str)->str:
+    '''Converts given date format into format accepted by SQL databse'''
     try: 
         text_new = parser.parse(text)
         text_new = add_apostrophes (text_new.strftime ("%Y-%m-%d"))
@@ -173,6 +145,7 @@ def convert_date_format (text:str)->str:
         raise ValueError ('Wrong date format.')
 
 def generate_report_query(date_min: str|None = None, date_max: str|None = None, category: str|None = None)->str:
+    '''Generates a query for creating a report based on the number of optional arguments given'''
     query = Q_SELECT_ALL
     counter = 0
     if date_min != None or date_max != None or category != None:
@@ -195,7 +168,7 @@ def generate_report_query(date_min: str|None = None, date_max: str|None = None, 
     return query
 
 
-def generate_report (conn: MySQL_Connector, date_min: str|None = None, date_max: str|None = None, category: str|None = None)->None:
+def generate_report (conn: Connector, date_min: str|None = None, date_max: str|None = None, category: str|None = None)->None:
     query = generate_report_query (date_min, date_max, category)
     report = conn.cursor_execute(query)
     print ('-ID- --=NAME=-- -=AMOUNT=- -=CATEGORY=- -=DATE=-')

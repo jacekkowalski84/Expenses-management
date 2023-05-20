@@ -1,5 +1,4 @@
 import mysql.connector
-# from mysql.connector import errorcode
 import psycopg2
 import sqlite3
 
