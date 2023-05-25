@@ -3,20 +3,6 @@ import psycopg2
 import sqlite3
 
 
-Q_CREATE_TABLE_COMMAND =  'CREATE TABLE '
-Q_CREATE_TABLE_EXIST = 'IF NOT EXIST '
-Q_CREATE_TABLE_DESC = '''expenses_list
-                    (
-                    exp_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR (30) NOT NULL, 
-                    amount DECIMAL(10,2) NOT NULL, 
-                    category VARCHAR (15) NOT NULL,
-                    date VARCHAR (50) NOT NULL
-                    );'''
-Q_CREATE_TABLE = Q_CREATE_TABLE_COMMAND + Q_CREATE_TABLE_DESC
-Q_CREATE_TABLE_SQLITE = Q_CREATE_TABLE_COMMAND + Q_CREATE_TABLE_EXIST + Q_CREATE_TABLE_DESC
-
-
 class Connector:
     """
     Base class for SQL connectors.
@@ -35,7 +21,7 @@ class Connector:
 
 
 class MySQL_Connector (Connector):
-    def __init__ (self, config):
+    def __init__ (self, config: dict[str, str])->None:
         """
         Creates a new connection to a MySQL database.
         """
@@ -60,17 +46,18 @@ class MySQL_Connector (Connector):
             raise ValueError(f"Failed creating database: {e}")
     
     
-    def create_table(self)->None:
+    def create_table(self, table_desc: str)->None:
         '''Creates a table in a MySQL server.'''
+        query = f'CREATE TABLE {table_desc}'
         try:
-            self.cursor_execute(Q_CREATE_TABLE)
-            print ('Table "expenses_list" created.')
+            self.cursor_execute(query)
+            print ('Table created.')
         except mysql.connector.Error as e:
             raise ValueError(f"Failed creating table: {e}")
              
 
 class PostgreSQL_Connector (Connector):
-    def __init__(self, host: str, db: str, user: str, password: str)->None:
+    def __init__(self, host: str|None, db: str|None, user: str|None, password: str|None)->None:
         """
         Creates a new connection to a PostgreSQL database.
         """
@@ -96,11 +83,12 @@ class PostgreSQL_Connector (Connector):
         raise ValueError ('Database with this name does not exist. Please log in to PostgreSQL client and create a database.')
     
     
-    def create_table(self)->None:
-        '''Creates a table in a MySQL server.'''
+    def create_table(self, table_desc)->None:
+        '''Creates a table in a PostgreSQL server.'''
+        query = f'CREATE TABLE {table_desc}'
         try:
-            self.cursor_execute(Q_CREATE_TABLE)
-            print ('Table "expenses_list" created.')
+            self.cursor_execute(query)
+            print ('Table created.')
         except mysql.connector.Error as e:
             raise ValueError(f"Failed creating table: {e}")
 
@@ -127,10 +115,12 @@ class SQLite_Connector (Connector):
         pass
 
     
-    def create_table(self)->None:
+    def create_table(self, table_desc)->None:
         '''Creates a table in a MySQL server.'''
+        query = f'CREATE TABLE IF NOT EXIST {table_desc}'
         try:
-            self.cursor_execute(Q_CREATE_TABLE_SQLITE)
+            self.cursor_execute(query)
+            print ('Table created.')
         except mysql.connector.Error as e:
             raise ValueError(f"Failed creating table: {e}")
 

@@ -20,7 +20,6 @@ Enviromental variables:
 '''
 
 from dataclasses import dataclass
-from datetime import datetime
 import os
 import sys
 
@@ -55,21 +54,42 @@ MYSQL_CONFIG_DB= {
 ######     SQL QUERIES:    ######
 
 Q_CREATE_DATABASE = f'CREATE DATABASE {DB} '
-Q_INSERT_VALUE = '''INSERT INTO expenses_list
-                    VALUES (%s, %s, %s, %s, %s);'''
-Q_SELECT_ALL = 'SELECT * FROM expenses_list'
+Q_CREATE_TABLE_EXPENSES = '''expenses_list
+                        (
+                        exp_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        name VARCHAR (30) NOT NULL, 
+                        amount DECIMAL(10,2) NOT NULL, 
+                        cat_id INT NOT NULL,
+                        date VARCHAR (50) NOT NULL,
+                        CONSTRAINT categories_cat_id_fk
+                        FOREIGN KEY (cat_id)
+                        REFERENCES categories (cat_id)
+                        );'''
+Q_CREATE_TABLE_CATEGORIES = '''categories
+                        (
+                        cat_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        category VARCHAR(30) NOT NULL
+                        );'''
+Q_INSERT_VALUE_EXPENSES = '''INSERT INTO expenses_list
+                    VALUES (%s, %s, %s, (SELECT cat_id FROM categories WHERE category =%s), %s);'''
+Q_INSERT_VALUE_CATEGORIES = "INSERT INTO categories (category) VALUES (%s);"
+Q_SELECT_CATEGORIES = "SELECT category FROM categories WHERE category IN (%s);"
+Q_SELECT_ALL = '''SELECT e.exp_id, e.name, e.amount, c.category, e.date 
+                FROM expenses_list AS e
+                NATURAL JOIN
+                categories AS c'''
 Q_SELECT_BY_CATEGORY = 'category = %s'
 Q_DATE_MIN = 'date >'
 Q_DATE_MAX = 'date <'
 
 
 @dataclass
-class Expanse:
+class Expense:
     id: None | int
     name: str
     amount : float
     category: str
-    date: datetime
+    date: str
 
     def __postinit__ (self):
         if self.id != None:
@@ -78,8 +98,8 @@ class Expanse:
             raise ValueError ("Missing name.")
         if self.amount=="":
             raise ValueError ("Missing amount argument!")
-        if type(self.amount) != int:
-            raise ValueError ("The amount should be an integer!") 
+        if type(self.amount) != float:
+            raise ValueError ("The amount should be an float!") 
         if self.amount <= 0:
             raise ValueError ("The amount has to be > 0!")
 
@@ -100,7 +120,9 @@ def init_database (conn: Connector)->None:
 
 
 def init_table (conn: Connector)->None:
-    conn.create_table()
+    conn.create_table(Q_CREATE_TABLE_CATEGORIES)
+    conn.create_table(Q_CREATE_TABLE_EXPENSES)
+    
 
 
 def close_connection(conn: Connector)->None:
@@ -108,41 +130,67 @@ def close_connection(conn: Connector)->None:
     conn.sqlcursor.close()
 
 
-def create_single_expense (name_:str, amount_: float, category_:str, date_:str)-> Expanse:
-    datetype = parser.parse(date_)
-    return Expanse (
+def convert_date_format (text:str)->str:
+    '''Converts given date format into format accepted by SQL databse'''
+    try: 
+        date_obj = parser.parse(text)
+        formatted_date = date_obj.strftime("%Y-%m-%d")
+        return formatted_date
+    except:
+        raise ValueError ('Wrong date format.')
+
+
+def create_single_expense (name_:str, amount_: float, category_:str, date_:str)-> Expense:
+    formatted_date = convert_date_format (date_)
+    return Expense (
         id = None,
         name = name_,
         amount = float(amount_),
         category = category_,
-        date = datetype
+        date = formatted_date
         )
 
 
-def insert_values (db: Connector, expense: Expanse):
-    query = Q_INSERT_VALUE
+def check_category_exists (conn: Connector, expense: Expense)-> bool:
+    data_select = (expense.category,)
+    conn.sqlcursor.execute(Q_SELECT_CATEGORIES, data_select)
+    result = conn.sqlcursor.fetchall()
+    if len(result) == 0:
+        exist=False
+    elif len(result) == 1:
+        exist=True
+    else:
+        raise ValueError ('There are multiple categories with this name.')
+    conn.connection.commit()
+    return exist
+    
+
+
+def add_new_category(conn: Connector, expense: Expense) -> None:
+    data_categories = (expense.category,)
+    conn.sqlcursor.execute(Q_INSERT_VALUE_CATEGORIES, data_categories)
+    conn.connection.commit()
+    conn.sqlcursor.fetchall() 
+    print (f'New category "{expense.category}" added')
+
+
+def insert_values (conn: Connector, expense: Expense): 
+    query = Q_INSERT_VALUE_EXPENSES
     data_expense = (None,
                 expense.name,
                 expense.amount,
                 expense.category,
                 expense.date)
-    db.sqlcursor.execute(query, data_expense)
-    db.connection.commit()
-    return db.sqlcursor.fetchall()
+    conn.sqlcursor.execute(query, data_expense)
+    conn.connection.commit()
+    print (f'New expense "{expense.name}" added')
+    conn.sqlcursor.fetchall()
 
 
 def add_apostrophes (text: str)-> str:
     text = f"'{text}'"
     return text
 
-def convert_date_format (text:str)->str:
-    '''Converts given date format into format accepted by SQL databse'''
-    try: 
-        text_new = parser.parse(text)
-        text_new = add_apostrophes (text_new.strftime ("%Y-%m-%d"))
-        return text_new
-    except:
-        raise ValueError ('Wrong date format.')
 
 def generate_report_query(date_min: str|None = None, date_max: str|None = None, category: str|None = None)->str:
     '''Generates a query for creating a report based on the number of optional arguments given'''
@@ -208,6 +256,9 @@ def add (name: str, amount: float, category: str, date: str)->None:
     conn = init_connection(RDBM)
     try:
         expense = create_single_expense (name, amount, category, date)
+        cat_exists = check_category_exists (conn, expense)
+        if not cat_exists: 
+            add_new_category (conn, expense)
         insert_values (conn, expense)
     except ValueError as e:
         print (e)
